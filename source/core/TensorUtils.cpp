@@ -36,9 +36,17 @@ void TensorUtils::setLinearLayout(Tensor* tensor) {
     for (int i = 0; i < buffer.dimensions; ++i) {
         auto index  = buffer.dimensions - i - 1;
         auto extent = buffer.dim[index].extent;
-        if (1 == index && tensor->mDescribe->dimensionFormat == MNN_DATA_FORMAT_NC4HW4) {
-            extent = ROUND_UP(extent, 4);
+        switch (buffer.dim[index].flags) {
+            case Tensor::REORDER_4:
+                extent = ROUND_UP(extent, 4);
+                break;
+            case Tensor::REORDER_8:
+                extent = ROUND_UP(extent, 8);
+                break;
+            default:
+                break;
         }
+
         buffer.dim[index].stride = size;
         size *= extent;
     }
@@ -65,7 +73,13 @@ void TensorUtils::clearHandleData(Tensor* tensor) {
 static const Tensor* createHostPlanar(const Tensor* source) {
     // check
     bool device = source->buffer().host == NULL && source->buffer().device != 0;
-    bool chunky = TensorUtils::getDescribe(source)->dimensionFormat == MNN_DATA_FORMAT_NC4HW4;
+    bool chunky = false;
+    for (int i = 0; i < source->dimensions(); i++) {
+        if (source->buffer().dim[i].flags) {
+            chunky = true;
+            break;
+        }
+    }
 
     // no convert needed
     if (!device && !chunky) {
@@ -79,6 +93,9 @@ static const Tensor* createHostPlanar(const Tensor* source) {
             TensorUtils::getDescribe(result)->dimensionFormat = MNN_DATA_FORMAT_NHWC;
         } else {
             TensorUtils::getDescribe(result)->dimensionFormat = MNN_DATA_FORMAT_NCHW;
+        }
+        for (int i = 0; i < source->dimensions(); i++) {
+            result->buffer().dim[i].flags = 0;
         }
         TensorUtils::setLinearLayout(result);
 
@@ -122,7 +139,7 @@ static bool equals(const double* pa, const double* pb, size_t size, double toler
         if (std::isinf(va) && std::isinf(vb)) {
             continue;
         }
-        if (fabs(va) < epsilon && fabs(vb) < epsilon) {
+        if (fabsf(va) < epsilon && fabsf(vb) < epsilon) {
             continue;
         }
         float div = overall ? max : fabsf(vb);
